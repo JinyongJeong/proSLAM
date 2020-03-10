@@ -1,0 +1,10 @@
+<launch>
+
+    <node name="srrg_proslam" pkg="srrg_proslam" type="node" output="screen">
+    <remap from="/camera_left/image_raw" to="/stereo/left/image_raw"/>
+    <remap from="/camera_right/image_raw" to="/stereo/right/image_raw"/>
+    <remap from="/camera_left/camera_info" to="/stereo/left/camera_info"/>
+    <remap from="/camera_right/camera_info" to="/stereo/right/camera_info"/>
+    </node>
+</launch>
+
