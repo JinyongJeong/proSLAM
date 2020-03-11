@@ -1,7 +1,10 @@
 #pragma once
-#include "base_aligner.h"
-#include "relocalization/closure.h"
+
 #include "types/local_map.h"
+
+#include "relocalization/closure.h"
+
+#include "base_aligner.h"
 
 namespace proslam
 {

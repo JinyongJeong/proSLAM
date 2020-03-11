@@ -1,6 +1,9 @@
 #pragma once
-#include "framepoint_generation/stereo_framepoint_generator.h"
+
 #include "position_tracking/base_tracker.h"
+
+#include "framepoint_generation/stereo_framepoint_generator.h"
+
 namespace proslam
 {
 // ds this class processes two subsequent Frames and establishes Framepoint correspondences (tracks) based on the

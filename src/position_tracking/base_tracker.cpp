@@ -1,5 +1,7 @@
-#include "aligners/stereouv_aligner.h"
+
 #include "base_tracker.h"
+
+#include "aligners/stereouv_aligner.h"
 
 namespace proslam
 {
@@ -153,7 +155,7 @@ void BaseTracker::compute()
         _pose_optimizer->setEnableWeightsTranslation(false);
         // Optimizer 초기화 / 데이터 정리
         _pose_optimizer->initialize(previous_frame, current_frame, previous_to_current);
-        // Optimize 실행
+        // Optimize 실행 (point reporjection을 이용해서 relative pose 최적화)
         _pose_optimizer->converge();
         CHRONOMETER_STOP(pose_optimization);
 

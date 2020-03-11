@@ -1,4 +1,5 @@
 #include "stereouv_aligner.h"
+
 #include "types/landmark.h"
 
 namespace proslam
@@ -90,6 +91,7 @@ void StereoUVAligner::initialize(const Frame* frame_previous_, const Frame* fram
 }
 
 // ds linearize the system: to be called inside oneRound
+// 선형화를 해서 각 measurement의 H 와 b를 구해서 delta x를 구하는 과정 (least square problem)
 void StereoUVAligner::linearize(const bool& ignore_outliers_)
 {
   // ds initialize setup
@@ -103,9 +105,11 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
   {
     _errors[u] = -1;
     _inliers[u] = false;
+    // information vector는 initialize 단계에서 어느정도 정해져있음
     _omega = _information_vector[u];
 
     // ds compute the point in the camera frame - prefering a landmark estimate if available
+    // 이전 frame의 3D point를 현재 frame으로 가져옴 (current relative pose 기준으로)
     const PointCoordinates sampled_point_in_camera_left = _previous_to_current * _moving[u];
     if (sampled_point_in_camera_left.z() <= _minimum_depth)
     {
@@ -115,12 +119,16 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     // ds retrieve homogeneous projections
     const Vector4 sampled_point_in_camera_left_homogeneous(
         sampled_point_in_camera_left.x(), sampled_point_in_camera_left.y(), sampled_point_in_camera_left.z(), 1);
+
+    // current frame으로 가져온 point를 이미지로 projection
     const PointCoordinates sampled_abc_in_camera_left = _camera_calibration_matrix * sampled_point_in_camera_left;
+    // baseline을 이용해서 right image로도 projection
     const PointCoordinates sampled_abc_in_camera_right = sampled_abc_in_camera_left + _offset_camera_right;
     const real& sampled_c_left = sampled_abc_in_camera_left.z();
     const real& sampled_c_right = sampled_abc_in_camera_right.z();
 
     // ds compute the image coordinates
+    // UV coordinate로 변경 (normalize)
     const PointCoordinates sampled_point_in_image_left = sampled_abc_in_camera_left / sampled_c_left;
     const PointCoordinates sampled_point_in_image_right = sampled_abc_in_camera_right / sampled_c_right;
 
@@ -139,6 +147,7 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     assert(_frame_current->cameraRight()->isInFieldOfView(sampled_point_in_image_right));
 
     // ds compute error (we compute the vertical error only once, since we assume rectified cameras)
+    // UV 를 비교해서 error 정의
     const Vector4 error(sampled_point_in_image_left.x() - _fixed[u](0), sampled_point_in_image_left.y() - _fixed[u](1),
                         sampled_point_in_image_right.x() - _fixed[u](2),
                         sampled_point_in_image_right.y() - _fixed[u](3));
@@ -153,9 +162,12 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     const real chi = error.transpose() * _omega * error;
 
     // ds update error stats
+
+    // 현재 relative로 계산한 error (scalar)
     _errors[u] = chi;
 
     // ds check if outlier
+    // error 가 maximum kernel 이상이면 outliear로 결정
     if (chi > _parameters->maximum_error_kernel)
     {
       if (ignore_outliers_)
@@ -164,10 +176,13 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
       }
 
       // ds proportionally reduce information value of the measurement
+      // outliear도 사용하는 경우, information matrix 크기를 줄임
       _omega *= _parameters->maximum_error_kernel / chi;
     }
     else
     {
+      // inliear인 경우
+
       _inliers[u] = true;
       ++_number_of_inliers;
     }
@@ -180,13 +195,22 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
 
     // ds translation contribution (will be scaled with omega)
     //      const real translation_weight = _maximum_reliable_depth_meters/sampled_point_in_camera_left.z();
+    // Translation에 대한 Jacobian
     jacobian_transform.block<3, 3>(0, 0) = _weights_translation[u] * Matrix3::Identity();
 
     // ds rotation contribution - compensate for inverse depth (far points should have an equally strong contribution as
     // close ones)
+    // Rotation 에 대한 Jacobian (rotation state는 quaternion)
     jacobian_transform.block<3, 3>(0, 3) = -2 * skew(sampled_point_in_camera_left);
 
+    // auto t = t2v(_previous_to_current);
+    // auto t_qua = t.block<3, 1>(3, 0);
+    // jacobian_transform.block<3, 3>(0, 3) =
+    //     2 * (t_qua.transpose() * sampled_point_in_camera_left + t_qua * sampled_point_in_camera_left.transpose() -
+    //          sampled_point_in_camera_left * t_qua.transpose() + skew(sampled_point_in_camera_left));
+
     // ds precompute
+    // K matrix에 대한 Jacibian 부분 곱해줌
     const Matrix3_6 camera_matrix_per_jacobian_transform(_camera_calibration_matrix * jacobian_transform);
 
     // ds precompute
@@ -196,6 +220,7 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     const real inverse_sampled_c_squared_right = inverse_sampled_c_right * inverse_sampled_c_right;
 
     // ds jacobian parts of the homogeneous division: left
+    // UV coordinate로 normalize 하는 부분에 대한 Jacobian
     Matrix2_3 jacobian_left;
     jacobian_left << inverse_sampled_c_left, 0, -sampled_abc_in_camera_left.x() * inverse_sampled_c_squared_left, 0,
         inverse_sampled_c_left, -sampled_abc_in_camera_left.y() * inverse_sampled_c_squared_left;
@@ -212,15 +237,18 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     _jacobian.setZero();
 
     // ds we have to compute the full block
+    // Left error에 대한 Jacobian
     _jacobian.block<2, 6>(0, 0) = jacobian_left * camera_matrix_per_jacobian_transform;
 
     // ds we only have to compute the horizontal block
+    // Right error에 대한 Jacobian
     _jacobian.block<2, 6>(2, 0) = jacobian_right * camera_matrix_per_jacobian_transform;
 
     // ds precompute transposed
     const Matrix6_4 jacobian_transposed(_jacobian.transpose());
 
     // ds update H and b
+    // Hessian matrix와 b matrix의 sum (모든 measurement에 대해서)
     _H += jacobian_transposed * _omega * _jacobian;
     _b += jacobian_transposed * _omega * error;
   }
@@ -233,13 +261,18 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
 void StereoUVAligner::oneRound(const bool& ignore_outliers_)
 {
   // ds linearize system once
+  // Linearize 과정을 통해서 모든 measurement에 대한 H (hessian matrix)와 b가 계산됨
+  // H delta X = -b 를 풀면 됨
   linearize(ignore_outliers_);
-
   // ds damping
+  // Hessian에 daming을 더해주는건 Levenberg 최적화 방법.
   _H += _parameters->damping * _number_of_measurements * Matrix6::Identity();
 
   // ds compute solution transformation after perturbation
+  // delta x 계산
   const Vector6 dx = _H.fullPivLu().solve(-_b);
+  // Pose update
+  // 계산된 deta x로 업데이트
   _previous_to_current = v2t(dx) * _previous_to_current;
 
   // ds enforce proper rotation matrix

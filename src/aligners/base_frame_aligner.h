@@ -1,6 +1,7 @@
 #pragma once
-#include "base_aligner.h"
 #include "types/frame.h"
+
+#include "base_aligner.h"
 
 namespace proslam
 {
