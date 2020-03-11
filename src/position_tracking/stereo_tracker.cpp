@@ -28,6 +28,7 @@ StereoTracker::~StereoTracker()
 
 Frame* StereoTracker::_createFrame()
 {
+  // worldmap에서 최신 frame을 pre_frame으로 넣어서 새로운 frame 생성
   Frame* current_frame = _context->createFrame(_context->robotToWorld());
   current_frame->setCameraLeft(_camera_left);
   current_frame->setIntensityImageLeft(_intensity_image_left);

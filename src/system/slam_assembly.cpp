@@ -1,9 +1,8 @@
-#include "slam_assembly.h"
-
 #include "aligners/stereouv_aligner.h"
 #include "aligners/uvd_aligner.h"
 #include "position_tracking/depth_tracker.h"
 #include "position_tracking/stereo_tracker.h"
+#include "slam_assembly.h"
 #include "srrg_messages/pinhole_image_message.h"
 
 namespace proslam

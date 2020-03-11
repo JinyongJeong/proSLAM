@@ -117,6 +117,7 @@ void StereoFramePointGenerator::initialize(Frame* frame_, const bool& extract_fe
   _feature_matcher_right.setFeatures(frame_->keypointsRight(), frame_->descriptorsRight());
 }
 
+// 현재 frame에 대한 keypoint와 descriptor는 뽑힌 상태 (initialize function)
 void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
                                       const TransformMatrix3D& camera_left_previous_in_current_,
                                       FramePointPointerVector& previous_framepoints_without_tracks_,
@@ -126,15 +127,20 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
   {
     throw std::runtime_error("StereoFramePointGenerator::track|called with invalid frames");
   }
+  // frame point들 삭제
   frame_->clear();
   const Matrix3& camera_calibration_matrix = _camera_left->cameraMatrix();
+  // frame point vector에 대한 reference (active point)
   FramePointPointerVector& framepoints(frame_->points());
+  // previous frame은 active point를 갖고 있음
   FramePointPointerVector& framepoints_previous(frame_previous_->points());
 
   // ds allocate space, existing framepoints will be overwritten!
+  // 이전 frame의 active point갯수만큼 크기 조정
   framepoints.resize(framepoints_previous.size());
 
   // ds store points for which we couldn't find a track candidate
+  // track candidate를 찾지 못한 point들을 위한 저장 공간
   previous_framepoints_without_tracks_.resize(framepoints_previous.size());
 
   // ds tracked and triangulated features (to not consider them in the exhaustive stereo matching)
@@ -145,18 +151,25 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
   _number_of_tracked_landmarks = 0;
 
   // ds for each previous point
+  // 이전 frame에서 active frame point들에 대해 계산
+  // 현재 left 이미지에서 correspondance를 찾고, 찾으면 오른쪽 이미지에서 correspondance 확인
+  // 둘다 찾으면 triangulation으로 3D point 계산하고, frame point 생성
   for (FramePoint* point_previous : framepoints_previous)
   {
     // ds transform the point into the current camera frame
+    // 이전 camera coordinate의 point를 motion model을 통해 prediction
     const Vector3 point_in_camera_left_prediction(camera_left_previous_in_current_ *
                                                   point_previous->cameraCoordinatesLeft());
 
     // ds project the point into the current left image plane
+    // image coordinate으로 projection
     const Vector3 point_in_image_left(camera_calibration_matrix * point_in_camera_left_prediction);
+    // UV coordinate로 변환
     const int32_t col_projection_left = point_in_image_left.x() / point_in_image_left.z();
     const int32_t row_projection_left = point_in_image_left.y() / point_in_image_left.z();
 
     // ds skip point if not in image plane
+    // image 영역을 넘어가는 point들은 skip
     if (col_projection_left < 0 || col_projection_left > _number_of_cols_image || row_projection_left < 0 ||
         row_projection_left > _number_of_rows_image)
     {
@@ -167,6 +180,7 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
     real descriptor_distance_best = _parameters->matching_distance_tracking_threshold;
 
     // ds define search region (rectangular ROI)
+    // Search 영역 define (사각형 영역)
     int32_t row_start_point = std::max(row_projection_left - _projection_tracking_distance_pixels, 0);
     int32_t row_end_point =
         std::min(row_projection_left + _projection_tracking_distance_pixels + 1, _number_of_rows_image);
@@ -175,19 +189,26 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
         std::min(col_projection_left + _projection_tracking_distance_pixels + 1, _number_of_cols_image);
 
     // ds find the best match for the previous left feature (i.e. track it)
+
+    // 사각형 영역을 search해서 best matching point 검출!
+    // track_by_appearace: feature distance로 best 찾기
+    // 아닌경우: reprojection distance로 best 찾기
     IntensityFeature* feature_left = _feature_matcher_left.getMatchingFeatureInRectangularRegion(
         row_projection_left, col_projection_left, point_previous->descriptorLeft(), row_start_point, row_end_point,
         col_start_point, col_end_point, _parameters->matching_distance_tracking_threshold, track_by_appearance_,
         descriptor_distance_best);
 
     // ds if we found a match
+    // candiate feature가 찾아진 경우!
     if (feature_left)
     {
       // ds compute projection offset (i.e. prediction error > optical flow)
+      // projection error
       const cv::Point2f projection_error(col_projection_left - feature_left->keypoint.pt.x,
                                          row_projection_left - feature_left->keypoint.pt.y);
 
       // ds project point into the right image - correcting by the prediction error
+      // 이전 frame에서 prediction한 포인트의 오른쪽 이미지에서의 좌표
       const Vector3 point_in_image_right(point_in_image_left + _baseline);
       const int32_t col_projection_right_corrected =
           point_in_image_right.x() / point_in_image_right.z() - projection_error.x;
@@ -204,6 +225,9 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
       // ds TRIANGULATION: obtain matching feature in right image (if any)
       // ds we reduce the vertical matching space to the epipolar range - we search only to the left of the measure left
       // camera coordinate
+      // epipolar_offset_previous: stereo camera라면 원래 같은 row에 feature가 있어야 하지만, 다양한 오차가 발생할수
+      // 있어서 일정 범위의 row도 search 영역으로 넣어준다.
+      // _projection_tracking_distance_pixels: 좌우 search 영역
       const int32_t epipolar_offset_previous = std::fabs(point_previous->epipolarOffset());
       row_start_point = std::max(row_projection_right_corrected - epipolar_offset_previous, 0);
       row_end_point = std::min(row_projection_right_corrected + epipolar_offset_previous + 1, _number_of_rows_image);
@@ -213,14 +237,19 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
 
       // ds we might increase the matching tolerance (maximum_matching_distance_triangulation) since we have a strong
       // prior on location
+      // 왼쪽 이미지에서의 feature와 가장 유사한 feature를 오른쪽 이미지에서 찾는다.
       IntensityFeature* feature_right = _feature_matcher_right.getMatchingFeatureInRectangularRegion(
           row_projection_right_corrected, col_projection_right_corrected, feature_left->descriptor, row_start_point,
           row_end_point, col_start_point, col_end_point, _current_maximum_descriptor_distance_triangulation, true,
           descriptor_distance_best);
 
+      //여기까지 하면 previous feature -> 현재 왼쪽 이미지에서 correspondance -> 현재 오른쪽 이미지에서 correspondance
+      //까지 찾아짐
+
       // ds if we found a match
       if (feature_right)
       {
+        // 오른쪽 correspondance의 x값이 무조건 더 커야한다.
         assert(feature_left->col >= feature_right->col);
 
         //        //ds skip feature if descriptor distance to previous is violated
@@ -230,12 +259,15 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
         //        }
 
         // ds skip points with insufficient stereo disparity
+        // 너무 멀리 있어서 disparity 차이가 거의 안나면 사용하지 않는다.
         if (feature_left->col - feature_right->col < _parameters->minimum_disparity_pixels)
         {
           continue;
         }
 
         // ds create a stereo match
+        // getPointInLeftCamera-> Stereo의 correspondance를 이용해서 3D point를 계산 (Depth는 disparity로 부터)
+        // 왼족/오른쪽 이미지에서 둘다 correpondance를 찾으면 traking 성공 -> point_previous의 next의 추가
         FramePoint* framepoint = frame_->createFramepoint(
             feature_left, feature_right, getPointInLeftCamera(feature_left->keypoint.pt, feature_right->keypoint.pt),
             point_previous);
@@ -246,10 +278,12 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
         framepoint->setProjectionEstimateLeft(cv::Point2f(col_projection_left, row_projection_left));
         framepoint->setProjectionEstimateRight(cv::Point2f(point_in_image_right.x() / point_in_image_right.z(),
                                                            point_in_image_right.y() / point_in_image_right.z()));
+        // left의 projection error만큼 보정한 오른쪽 key point
         framepoint->setProjectionEstimateRightCorrected(
             cv::Point2f(col_projection_right_corrected, row_projection_right_corrected));
 
         // ds store and move to next slot
+        // current frame의 feature point 저장
         framepoints[number_of_points] = framepoint;
         ++number_of_points;
 
@@ -258,9 +292,10 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
         matched_indices_right.insert(feature_right->index_in_vector);
 
         // ds remove feature from lattices
+        // correspondance를 찾은 pixel의 데이터 삭제 (추가로 검사되는 것을 방지)
         _feature_matcher_left.feature_lattice[feature_left->row][feature_left->col] = nullptr;
         _feature_matcher_right.feature_lattice[feature_right->row][feature_right->col] = nullptr;
-
+        // tracking 성공하면 이전 point의 landmark 정보를 가져옴, 이전 point가 landmark인 경우
         if (framepoint->landmark())
         {
           ++_number_of_tracked_landmarks;
@@ -269,18 +304,23 @@ void StereoFramePointGenerator::track(Frame* frame_, Frame* frame_previous_,
     }
 
     // ds if we couldn't track the point
+    // point_previous->next()에 현재 point가 등록되지 않으면 tracking실패 한것
     if (!point_previous->next())
     {
       previous_framepoints_without_tracks_[number_of_points_lost] = point_previous;
       ++number_of_points_lost;
     }
   }
+  // tracking 성공한 point 갯수 만큼으로 resize
   framepoints.resize(number_of_points);
+  // tracking 실패한 point 갯수 만큼으로 resize
   previous_framepoints_without_tracks_.resize(number_of_points_lost);
 
   // ds remove matched indices from candidate pools
+  // matching이 된 feature들은 canidate pool에서 제거한다.
   _feature_matcher_left.prune(matched_indices_left);
   _feature_matcher_right.prune(matched_indices_right);
+
   LOG_DEBUG(std::cerr << "StereoFramePointGenerator::track|tracked and triangulated points: " << number_of_points << "/"
                       << framepoints_previous.size() << " (landmarks: " << _number_of_tracked_landmarks << ")"
                       << std::endl)
@@ -428,8 +468,10 @@ void StereoFramePointGenerator::compute(Frame* frame_)
         }
 
         // ds compute a new framepoint without track
+        // stereo의 correspondence를 이용하여 3D point로 변환 (detph는 disparity로 부터)
         FramePoint* framepoint = frame_->createFramepoint(
             feature_left, feature_right, getPointInLeftCamera(feature_left->keypoint.pt, feature_right->keypoint.pt));
+
         framepoint->setEpipolarOffset(epipolar_offset);
         framepoint->setDescriptorDistanceTriangulation(descriptor_distance_best);
 

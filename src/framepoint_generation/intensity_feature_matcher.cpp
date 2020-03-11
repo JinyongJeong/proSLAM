@@ -100,6 +100,8 @@ IntensityFeature* IntensityFeatureMatcher::getMatchingFeatureInRectangularRegion
   int32_t row_best = -1;
   int32_t col_best = -1;
 
+  // track_by_appearance: feature distance가 가장 작은 feature point가 best matching!
+  // not track_by_appearnace:: reprojection error가 가장 작은 feature가 best matching!
   // ds locate best match in appearance
   if (track_by_appearance_)
   {

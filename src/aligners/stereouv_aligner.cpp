@@ -22,6 +22,7 @@ void StereoUVAligner::initialize(const Frame* frame_previous_, const Frame* fram
   _previous_to_current = previous_to_current_;
 
   // ds prepare buffers
+  // active point의 수
   _number_of_measurements = _frame_current->points().size();
   _errors.resize(_number_of_measurements);
   _inliers.resize(_number_of_measurements);
@@ -41,18 +42,21 @@ void StereoUVAligner::initialize(const Frame* frame_previous_, const Frame* fram
     assert(frame_point->previous());
 
     // ds set fixed part (image coordinates)
+    // fixed part: 현재 frame의 key point들의 image coordinate
     _fixed[u](0) = frame_point->imageCoordinatesLeft().x();
     _fixed[u](1) = frame_point->imageCoordinatesLeft().y();
     _fixed[u](2) = frame_point->imageCoordinatesRight().x();
     _fixed[u](3) = frame_point->imageCoordinatesRight().y();
 
     // ds if we have a landmark
+    // moving part: 이전 frame의 point들의 3D 좌표 (camera coordinate)
     if (frame_point->landmark())
     {
       // ds prefer landmark estimate
       _moving[u] = frame_point->previous()->cameraCoordinatesLeftLandmark();
 
       // ds increase weight linear in the number of updates
+      // landmark 업데이트를 많이하면 information을 높인다.
       _information_vector[u] *= (1 + frame_point->landmark()->numberOfUpdates());
     }
     else
@@ -63,11 +67,13 @@ void StereoUVAligner::initialize(const Frame* frame_previous_, const Frame* fram
 
     // ds scale information proportional to disparity of the measurement (the bigger, the closer, the better the
     // triangulation)
+    // information 조정 (거리, 등등에 따라서)
     _information_vector[u] *=
         std::log(1 + frame_point->disparityPixels()) / (1 + std::fabs(frame_point->epipolarOffset()));
   }
 
   // ds if individual weighting is desired
+  // depth 에 따른 weight 생성
   if (_enable_weights_translation)
   {
     for (Index u = 0; u < _number_of_measurements; ++u)
@@ -252,6 +258,7 @@ void StereoUVAligner::converge()
   // ds start LS
   for (Count iteration = 0; iteration < _parameters->maximum_number_of_iterations; ++iteration)
   {
+    // ignore outliear
     oneRound(false);
 
     // ds check if converged (no descent required)
@@ -265,6 +272,7 @@ void StereoUVAligner::converge()
         for (Count iteration_inlier = 0; iteration_inlier < _parameters->maximum_number_of_iterations;
              ++iteration_inlier)
         {
+          // not ignore outliear
           oneRound(true);
 
           // ds check for convergence

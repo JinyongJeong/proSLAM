@@ -36,6 +36,7 @@ BaseTracker::~BaseTracker()
   LOG_INFO(std::cerr << "BaseTracker::~BaseTracker|destroyed" << std::endl)
 }
 
+// Camera image를 넣어주고 compute() 실행
 void BaseTracker::compute()
 {
   assert(_camera_left);
@@ -88,11 +89,15 @@ void BaseTracker::compute()
   }
 
   // ds create new frame
+  // camera, intensity image로 frame을 만든다. (worldmap에서 최신 frame을 이전 frame에 넣고 새로운 frame 생성)
   Frame* current_frame = _createFrame();
+  // status: localizing or tracking
   current_frame->setStatus(_status);
+  // previous frame은 worldmap이 넣어준 frame (_createFrame 함수에서)
   Frame* previous_frame = current_frame->previous();
 
   // ds initialize framepoint generator
+  // 현재 frame에서 keypoint추출 -> descriptor 추출 -> matcher에 데이터 넣어줌
   _framepoint_generator->initialize(current_frame);
 
   // ds if possible - attempt to track the points from the previous frame
@@ -103,6 +108,10 @@ void BaseTracker::compute()
     bool track_by_appearance = (_status == Frame::Localizing);
 
     // ds search point tracks
+    // 이전 frame이 유효하면 tracking 실행
+    // 이전 frame의 feature와 maching되는 keypoint를 current left/right에서 찾는다
+    // left/right에서 모두 찾으면 tracking 성공/ 아니면 실패
+    // 여기까지 pose 보정은 없음
     CHRONOMETER_START(tracking);
     _track(previous_frame, current_frame, previous_to_current, track_by_appearance);
     CHRONOMETER_STOP(tracking);
@@ -112,10 +121,15 @@ void BaseTracker::compute()
   _number_of_potential_points = _framepoint_generator->numberOfDetectedKeypoints();
   switch (_status)
   {
+    // 상황에 따라서 localizatino mode와 tracking모드로 나뉘어서 계산이 수행된다.
+
     // ds localization mode - always running on tracking by appearance with maximum window size
+
+    // Localization 모드
     case Frame::Localizing:
     {
       // ds if we got not enough tracks to evaluate for position tracking
+      // tracking된 point가 너무 적으면 종료
       if (_number_of_tracked_points < _parameters->minimum_number_of_landmarks_to_track)
       {
         // ds reset state and stick to previous solution
@@ -135,8 +149,11 @@ void BaseTracker::compute()
 
         // ds solve pose on frame points only
         CHRONOMETER_START(pose_optimization);
+        // pose optimizer 실행
         _pose_optimizer->setEnableWeightsTranslation(false);
+        // Optimizer 초기화 / 데이터 정리
         _pose_optimizer->initialize(previous_frame, current_frame, previous_to_current);
+        // Optimize 실행
         _pose_optimizer->converge();
         CHRONOMETER_STOP(pose_optimization);
 
@@ -223,6 +240,7 @@ void BaseTracker::_track(Frame* previous_frame_, Frame* current_frame_, const Tr
                          const bool& track_by_appearance_)
 {
   // ds check state for current framepoint tracking configuration
+  // apearance 로 tracking할 때 search 윈도우 크기를 최대로 (이전 frame과 현재 frame의 correspondence 찾을 때)
   if (track_by_appearance_)
   {
     // ds maximimize tracking window
@@ -232,14 +250,23 @@ void BaseTracker::_track(Frame* previous_frame_, Frame* current_frame_, const Tr
 
   // ds configure and track points in current frame
   _framepoint_generator->setProjectionTrackingDistancePixels(_projection_tracking_distance_pixels);
+  // 이전 frame의 feature와 maching되는 keypoint를 current left/right에서 찾는다
+  // left/right에서 모두 찾으면 tracking 성공/ 아니면 실패
+  // _lost_points: tracking에 실패한 point들이 들어감
+  // tracking파트는 motion 모델(여기선 previous_to_curernt)의 모션으로 prediction한 걸로 tracking수행
+  // previous keypoint의 correpondace를 left에서 찾을때는 사각형 영역에서 찾음.
+  // left keypoint의 correpondace를 right에서 찾을 때는 좌우 일정 거리 + 위아래 약간의 범위 에서 search
   _framepoint_generator->track(current_frame_, previous_frame_, previous_to_current_, _lost_points,
                                track_by_appearance_);
 
   // ds adjust bookkeeping
+  // tracking 실패한 point의 갯수
   _number_of_lost_points = _lost_points.size();
+  // tracking 성공하면 이전 point에서 landmark 정보를 가져옴.
   _number_of_tracked_landmarks = _framepoint_generator->numberOfTrackedLandmarks();
   _number_of_tracked_points = current_frame_->points().size();
 
+  // 얼마만큼의 point가 tracking되었는지
   _tracking_ratio = static_cast<real>(_number_of_tracked_points) / previous_frame_->points().size();
 
   // ds if we're below the target - raise tracking window for next image
@@ -260,18 +287,20 @@ void BaseTracker::_track(Frame* previous_frame_, Frame* current_frame_, const Tr
     if (_projection_tracking_distance_pixels >
         _framepoint_generator->parameters()->minimum_projection_tracking_distance_pixels)
     {
-      _projection_tracking_distance_pixels =
-          std::max(_projection_tracking_distance_pixels * _parameters->tunnel_vision_ratio,
-                   static_cast<real>(_framepoint_generator->parameters()->minimum_projection_tracking_distance_pixels));
+      _projection_tracking_distance_pixels = std::max(
+          _projection_tracking_distance_pixels * _parameters->tunnel_vision_ratio,  // tracking search 범위를 점점 줄임
+          static_cast<real>(_framepoint_generator->parameters()->minimum_projection_tracking_distance_pixels));
     }
   }
 
   // ds stats
+  // tracking ratio 들의 평균을 업데이트
   _mean_tracking_ratio =
       (_number_of_tracked_frames * _mean_tracking_ratio + _tracking_ratio) / (1 + _number_of_tracked_frames);
   ++_number_of_tracked_frames;
 
   // ds update frame with current points
+
   _total_number_of_landmarks += _number_of_tracked_landmarks;
 
   // ds VISUALIZATION ONLY
