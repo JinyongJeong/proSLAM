@@ -47,6 +47,8 @@ void StereoTracker::compute()
 
 // ds attempts to recover framepoints in the current image using the more precise pose estimate, retrieved after pose
 // optimization
+// Pose 최적화로 업데이트된 pose를 이용해서 다시 point들을 recover (left, right에서 correpondence를 다시 검색함,
+// landmark인 것들중에서)
 void StereoTracker::_recoverPoints(Frame* current_frame_)
 {
   // ds precompute transforms
@@ -64,6 +66,7 @@ void StereoTracker::_recoverPoints(Frame* current_frame_)
   std::vector<cv::KeyPoint> keypoint_buffer_right(1);
 
   // ds recover lost landmarks
+  // tracking 실패한 것 중에서 landmark인 것만 복원!!
   Index index_lost_point_recovered = _number_of_tracked_points;
   current_frame_->points().resize(_number_of_tracked_points + _number_of_lost_points);
   for (FramePoint* point_previous : _lost_points)
@@ -83,6 +86,7 @@ void StereoTracker::_recoverPoints(Frame* current_frame_)
       point_previous->landmark()->incrementNumberOfRecoveries();
 
       // ds get point in camera frame based on landmark coordinates
+      // camera coordinate으로 변환
       point_in_camera_homogeneous = world_to_camera_left * point_previous->landmark()->coordinates();
     }
     else

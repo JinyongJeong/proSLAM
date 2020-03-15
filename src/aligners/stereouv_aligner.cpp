@@ -203,12 +203,6 @@ void StereoUVAligner::linearize(const bool& ignore_outliers_)
     // Rotation 에 대한 Jacobian (rotation state는 quaternion)
     jacobian_transform.block<3, 3>(0, 3) = -2 * skew(sampled_point_in_camera_left);
 
-    // auto t = t2v(_previous_to_current);
-    // auto t_qua = t.block<3, 1>(3, 0);
-    // jacobian_transform.block<3, 3>(0, 3) =
-    //     2 * (t_qua.transpose() * sampled_point_in_camera_left + t_qua * sampled_point_in_camera_left.transpose() -
-    //          sampled_point_in_camera_left * t_qua.transpose() + skew(sampled_point_in_camera_left));
-
     // ds precompute
     // K matrix에 대한 Jacibian 부분 곱해줌
     const Matrix3_6 camera_matrix_per_jacobian_transform(_camera_calibration_matrix * jacobian_transform);
@@ -291,10 +285,12 @@ void StereoUVAligner::converge()
   // ds start LS
   for (Count iteration = 0; iteration < _parameters->maximum_number_of_iterations; ++iteration)
   {
-    // ignore outliear
+    // not ignore outliear
+    // 수렴할 때 까지 outliear를 뺴지 않고 최적화 수행
     oneRound(false);
 
     // ds check if converged (no descent required)
+    // 수렴 조건이 되면
     if (_parameters->error_delta_for_convergence > std::fabs(total_error_previous - _total_error))
     {
       total_error_previous = _total_error;
@@ -305,7 +301,8 @@ void StereoUVAligner::converge()
         for (Count iteration_inlier = 0; iteration_inlier < _parameters->maximum_number_of_iterations;
              ++iteration_inlier)
         {
-          // not ignore outliear
+          // ignore outliear
+          // 최종 outliear 없이 최적화
           oneRound(true);
 
           // ds check for convergence

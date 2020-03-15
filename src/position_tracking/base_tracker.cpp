@@ -163,11 +163,14 @@ void BaseTracker::compute()
         if (_pose_optimizer->numberOfInliers() > _parameters->minimum_number_of_landmarks_to_track)
         {
           // ds compute resulting motion
+          // tracking 결과 가져와서 사용
           _previous_to_current_camera = _pose_optimizer->previousToCurrent();
+
           const real delta_angular = WorldMap::toOrientationRodrigues(_previous_to_current_camera.linear()).norm();
           const real delta_translational = _previous_to_current_camera.translation().norm();
 
           // ds if the posit result is significant enough
+          // 움직임이 너무 적으면 이전 frame 데이터 그대로 받음
           if (delta_angular > _parameters->minimum_delta_angular_for_movement ||
               delta_translational > _parameters->minimum_delta_translational_for_movement)
           {
@@ -196,6 +199,8 @@ void BaseTracker::compute()
     }
 
     // ds on the track
+    // Inliear 갯수 및 aligner가 pose를 optimize 할 조건이 될 떄까지 tracking을 재 수행
+    // tracking 할 수 있는 조건이 되면 aligner를 통해 pose optimization
     case Frame::Tracking:
     {
       _registerRecursive(previous_frame, current_frame, previous_to_current);
@@ -213,6 +218,8 @@ void BaseTracker::compute()
 
   // ds check if we switch to tracking state
   _status_previous = _status;
+  // Tracking을 하는데 실패하면 -> localization으로 변경
+  // active landmark의 수가 minimum이 넘으면 다시 tracking 모드
   if (_number_of_active_landmarks > _parameters->minimum_number_of_landmarks_to_track)
   {
     _status = Frame::Tracking;
@@ -523,6 +530,7 @@ void BaseTracker::_updatePoints(WorldMap* context_, Frame* frame_)
     }
 
     // ds update landmark position based on current point (triggered as we linked the landmark to the point)
+    // 입력 point를 landmark에 추가하고, 최적화를 통해 landmark의 3D position을 업데이트
     landmark->update(point);
     point->setCameraCoordinatesLeftLandmark(frame_->worldToCameraLeft() * landmark->coordinates());
     ++_number_of_active_landmarks;

@@ -588,6 +588,7 @@ void SLAMAssembly::process(const cv::Mat& intensity_image_left_, const cv::Mat& 
   }
 
   // ds track framepoints and derive new robot pose
+  // 입력 데이터에 대해서 tracking 수행, landmark 업데이트
   _tracker->compute();
 
   // ds if we generated a valid frame
@@ -597,6 +598,7 @@ void SLAMAssembly::process(const cv::Mat& intensity_image_left_, const cv::Mat& 
     _world_map->currentFrame()->setTimestampImageLeftSeconds(timestamp_image_left_seconds_);
 
     // ds if relocalization is not disabled
+    // Relocalizatino 수행
     if (!_parameters->command_line_parameters->option_disable_relocalization)
     {
       // ds local map generation - regardless of tracker state
@@ -604,6 +606,7 @@ void SLAMAssembly::process(const cv::Mat& intensity_image_left_, const cv::Mat& 
       {
         _map_viewer->lock();
       }
+      // Loopclosing은 local map을 기준으로 수행함
       const bool created_local_map =
           _world_map->createLocalMap(_parameters->command_line_parameters->option_drop_framepoints);
       if (_map_viewer)
